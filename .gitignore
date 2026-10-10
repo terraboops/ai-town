@@ -42,3 +42,7 @@ dist
 
 convex-local*
 convex_local*
+
+# MCP server dependencies
+mcp/node_modules/
+mcp/package-lock.json

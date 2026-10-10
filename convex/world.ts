@@ -111,30 +111,26 @@ export const userStatus = query({
 export const joinWorld = mutation({
   args: {
     worldId: v.id('worlds'),
+    // Optional, so the stock browser UI keeps working unchanged. A caller that supplies a
+    // name -- an MCP client acting for a particular person or agent -- gets its own
+    // character instead of sharing the single default name with every other caller.
+    // tokenIdentifier follows the name because that is what identifies a player across a
+    // reconnect: two callers sharing one would be treated as the same person.
+    name: v.optional(v.string()),
+    description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // const identity = await ctx.auth.getUserIdentity();
-    // if (!identity) {
-    //   throw new ConvexError(`Not logged in`);
-    // }
-    // const name =
-    //   identity.givenName || identity.nickname || (identity.email && identity.email.split('@')[0]);
-    const name = DEFAULT_NAME;
+    const name = args.name?.trim() || DEFAULT_NAME;
 
-    // if (!name) {
-    //   throw new ConvexError(`Missing name on ${JSON.stringify(identity)}`);
-    // }
     const world = await ctx.db.get(args.worldId);
     if (!world) {
       throw new ConvexError(`Invalid world ID: ${args.worldId}`);
     }
-    // const { tokenIdentifier } = identity;
     return await insertInput(ctx, world._id, 'join', {
       name,
       character: characters[Math.floor(Math.random() * characters.length)].name,
-      description: `${DEFAULT_NAME} is a human player`,
-      // description: `${identity.givenName} is a human player`,
-      tokenIdentifier: DEFAULT_NAME,
+      description: args.description?.trim() || `${name} is a human player`,
+      tokenIdentifier: name,
     });
   },
 });

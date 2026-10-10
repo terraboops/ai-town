@@ -1,0 +1,16 @@
+{
+  "name": "ai-town-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server that lets an agent drive its own character in AI Town.",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "jose": "^5.9.6",
+    "zod": "^3.24.1"
+  }
+}
