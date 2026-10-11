@@ -1,4 +1,5 @@
 import Game from './components/Game.tsx';
+import TVGame from './components/TVGame.tsx';
 
 import { ToastContainer } from 'react-toastify';
 import a16zImg from '../assets/a16z.png';
@@ -19,6 +20,12 @@ import PoweredByConvex from './components/PoweredByConvex.tsx';
 
 export default function Home() {
   const [helpModalOpen, setHelpModalOpen] = useState(false);
+  // ?tv=1 is the TV view: the canvas alone, edge to edge, no title, panel, buttons or footer.
+  // Same heartbeat and data flow as the main view, so watching it keeps the world awake.
+  const isTV = new URLSearchParams(window.location.search).get('tv') === '1';
+  if (isTV) {
+    return <TVGame />;
+  }
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-between font-body game-background">
       <PoweredByConvex />
