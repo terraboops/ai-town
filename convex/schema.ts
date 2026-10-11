@@ -4,6 +4,7 @@ import { agentTables } from './agent/schema';
 import { aiTownTables } from './aiTown/schema';
 import { conversationId, playerId } from './aiTown/ids';
 import { engineTables } from './engine/schema';
+import { showcaseTables } from './showcase';
 
 export default defineSchema({
   music: defineTable({
@@ -24,4 +25,11 @@ export default defineSchema({
   ...agentTables,
   ...aiTownTables,
   ...engineTables,
+
+  // The TV showcase's highlight reel. See showcase.ts.
+  messageScores: defineTable(showcaseTables.messageScores)
+    .index('worldId', ['worldId', 'at'])
+    .index('messageId', ['messageId']),
+  messageVectors: defineTable(showcaseTables.messageVectors).index('worldId', ['worldId', 'at']),
+  rankerState: defineTable(showcaseTables.rankerState).index('worldId', ['worldId']),
 });

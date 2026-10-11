@@ -23,6 +23,7 @@ import { internal } from '../_generated/api';
 import { movePlayer } from './movement';
 import { insertInput } from './insertInput';
 import { notifyMessage } from '../agent/events';
+import { requestRanking } from '../showcase';
 
 export class Agent {
   id: GameId<'agents'>;
@@ -334,6 +335,7 @@ export const agentSendMessage = internalMutation({
       leaveConversation: args.leaveConversation,
       operationId: args.operationId,
     });
+    await requestRanking(ctx, args.worldId);
     await notifyMessage(ctx, {
       worldId: args.worldId,
       conversationId: args.conversationId,

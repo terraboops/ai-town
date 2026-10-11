@@ -3,6 +3,7 @@ import { mutation, query } from './_generated/server';
 import { insertInput } from './aiTown/insertInput';
 import { conversationId, playerId } from './aiTown/ids';
 import { notifyMessage } from './agent/events';
+import { requestRanking } from './showcase';
 
 export const listMessages = query({
   args: {
@@ -50,6 +51,7 @@ export const writeMessage = mutation({
       playerId: args.playerId,
       timestamp: Date.now(),
     });
+    await requestRanking(ctx, args.worldId);
     await notifyMessage(ctx, {
       worldId: args.worldId,
       conversationId: args.conversationId,

@@ -1,5 +1,6 @@
 import Game from './components/Game.tsx';
 import TVGame from './components/TVGame.tsx';
+import ShowcaseTV from './components/ShowcaseTV.tsx';
 
 import { ToastContainer } from 'react-toastify';
 import a16zImg from '../assets/a16z.png';
@@ -22,7 +23,13 @@ export default function Home() {
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   // ?tv=1 is the TV view: the canvas alone, edge to edge, no title, panel, buttons or footer.
   // Same heartbeat and data flow as the main view, so watching it keeps the world awake.
-  const isTV = new URLSearchParams(window.location.search).get('tv') === '1';
+  const params = new URLSearchParams(window.location.search);
+  const isTV = params.get('tv') === '1';
+  // ?tv=1&demo=1 adds the showcase: a camera that follows conversations, and the day's
+  // highlights when nobody is talking.
+  if (isTV && params.get('demo') === '1') {
+    return <ShowcaseTV />;
+  }
   if (isTV) {
     return <TVGame />;
   }
