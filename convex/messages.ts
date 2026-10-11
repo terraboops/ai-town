@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 import { insertInput } from './aiTown/insertInput';
 import { conversationId, playerId } from './aiTown/ids';
+import { notifyMessage } from './agent/events';
 
 export const listMessages = query({
   args: {
@@ -48,6 +49,12 @@ export const writeMessage = mutation({
       conversationId: args.conversationId,
       playerId: args.playerId,
       timestamp: Date.now(),
+    });
+    await notifyMessage(ctx, {
+      worldId: args.worldId,
+      conversationId: args.conversationId,
+      author: args.playerId,
+      text: args.text,
     });
   },
 });

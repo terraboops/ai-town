@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { Id } from '../_generated/dataModel';
 import { ActionCtx, internalQuery } from '../_generated/server';
-import { LLMMessage, chatCompletion } from '../util/llm';
+import { CreateChatCompletionRequest, LLMMessage, chatCompletion } from '../util/llm';
 import * as memory from './memory';
 import { api, internal } from '../_generated/api';
 import * as embeddingsCache from './embeddingsCache';
@@ -16,6 +16,7 @@ export async function startConversationMessage(
   conversationId: GameId<'conversations'>,
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
+  speak: Speak = defaultSpeak,
 ): Promise<string> {
   const { player, otherPlayer, agent, otherAgent, lastConversation } = await ctx.runQuery(
     selfInternal.queryPromptData,
@@ -62,12 +63,28 @@ export async function startConversationMessage(
     { role: 'user', content: lastPrompt },
   ];
 
-  const { content } = await chatCompletion({
-    messages,
+  const content = await speak({
+    messages: withStyle(messages, speak),
     max_tokens: 300,
     stop: stopWords(otherPlayer.name, player.name),
   });
   return trimContentPrefx(content, lastPrompt);
+}
+
+// Who writes the words. Upstream always asks the town's one model; a resident with a brain
+// passes its own speaker (agent/brain.ts), which picks the model and logs the call.
+export type Speak = ((
+  body: Omit<CreateChatCompletionRequest, 'model'> & { stream?: false },
+) => Promise<string>) & { style?: string };
+
+const defaultSpeak: Speak = async (body) => (await chatCompletion(body)).content;
+
+function withStyle(messages: LLMMessage[], speak: Speak): LLMMessage[] {
+  if (!speak.style || messages[0]?.role !== 'system') return messages;
+  return [
+    { ...messages[0], content: `${messages[0].content}\n${speak.style}` },
+    ...messages.slice(1),
+  ];
 }
 
 function trimContentPrefx(content: string, prompt: string) {
@@ -83,6 +100,7 @@ export async function continueConversationMessage(
   conversationId: GameId<'conversations'>,
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
+  speak: Speak = defaultSpeak,
 ): Promise<string> {
   const { player, otherPlayer, conversation, agent, otherAgent } = await ctx.runQuery(
     selfInternal.queryPromptData,
@@ -128,8 +146,8 @@ export async function continueConversationMessage(
   const lastPrompt = `${player.name} to ${otherPlayer.name}:`;
   llmMessages.push({ role: 'user', content: lastPrompt });
 
-  const { content } = await chatCompletion({
-    messages: llmMessages,
+  const content = await speak({
+    messages: withStyle(llmMessages, speak),
     max_tokens: 300,
     stop: stopWords(otherPlayer.name, player.name),
   });
@@ -142,6 +160,7 @@ export async function leaveConversationMessage(
   conversationId: GameId<'conversations'>,
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
+  speak: Speak = defaultSpeak,
 ): Promise<string> {
   const { player, otherPlayer, conversation, agent, otherAgent } = await ctx.runQuery(
     selfInternal.queryPromptData,
@@ -177,8 +196,8 @@ export async function leaveConversationMessage(
   const lastPrompt = `${player.name} to ${otherPlayer.name}:`;
   llmMessages.push({ role: 'user', content: lastPrompt });
 
-  const { content } = await chatCompletion({
-    messages: llmMessages,
+  const content = await speak({
+    messages: withStyle(llmMessages, speak),
     max_tokens: 300,
     stop: stopWords(otherPlayer.name, player.name),
   });

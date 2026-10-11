@@ -22,6 +22,7 @@ import { distance } from '../util/geometry';
 import { internal } from '../_generated/api';
 import { movePlayer } from './movement';
 import { insertInput } from './insertInput';
+import { notifyMessage } from '../agent/events';
 
 export class Agent {
   id: GameId<'agents'>;
@@ -113,7 +114,7 @@ export class Agent {
         // a human unconditionally.
         if (otherPlayer.human || Math.random() < INVITE_ACCEPT_PROBABILITY) {
           console.log(`Agent ${player.id} accepting invite from ${otherPlayer.id}`);
-          conversation.acceptInvite(game, player);
+          conversation.acceptInvite(game, now, player);
           // Stop moving so we can start walking towards the other player.
           if (player.pathfinding) {
             delete player.pathfinding;
@@ -298,6 +299,9 @@ export async function runAgentOperation(ctx: MutationCtx, operation: string, arg
     case 'agentDoSomething':
       reference = internal.aiTown.agentOperations.agentDoSomething;
       break;
+    case 'notifyInvite':
+      reference = internal.agent.events.notifyInvite;
+      break;
     default:
       throw new Error(`Unknown operation: ${operation}`);
   }
@@ -330,6 +334,13 @@ export const agentSendMessage = internalMutation({
       leaveConversation: args.leaveConversation,
       operationId: args.operationId,
     });
+    await notifyMessage(ctx, {
+      worldId: args.worldId,
+      conversationId: args.conversationId,
+      author: args.playerId,
+      text: args.text,
+      leaving: args.leaveConversation,
+    });
   },
 });
 
@@ -358,7 +369,7 @@ export const findConversationCandidate = internalQuery({
           continue;
         }
       }
-      candidates.push({ id: otherPlayer.id, position });
+      candidates.push({ id: otherPlayer.id, position: otherPlayer.position });
     }
 
     // Sort by distance and take the nearest candidate.

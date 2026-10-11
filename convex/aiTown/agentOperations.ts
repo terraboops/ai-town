@@ -14,6 +14,7 @@ import { ACTIVITIES, ACTIVITY_COOLDOWN, CONVERSATION_COOLDOWN } from '../constan
 import { api, internal } from '../_generated/api';
 import { sleep } from '../util/sleep';
 import { serializedPlayer } from './player';
+import { brainTick, brainTurn } from '../agent/brainProgram';
 
 export const agentRememberConversation = internalAction({
   args: {
@@ -55,8 +56,16 @@ export const agentGenerateMessage = internalAction({
     messageUuid: v.string(),
   },
   handler: async (ctx, args) => {
+    // A resident with a brain may decide, on its turn, to wrap up instead of carrying on,
+    // and speaks with its own model.
+    const resolved = await ctx.runQuery(internal.agent.brain.resolveBrain, {
+      worldId: args.worldId,
+      agentId: args.agentId,
+    });
+    const turn = resolved ? await brainTurn(ctx, args, resolved) : null;
+    const type = turn?.type ?? args.type;
     let completionFn;
-    switch (args.type) {
+    switch (type) {
       case 'start':
         completionFn = startConversationMessage;
         break;
@@ -67,7 +76,7 @@ export const agentGenerateMessage = internalAction({
         completionFn = leaveConversationMessage;
         break;
       default:
-        assertNever(args.type);
+        assertNever(type);
     }
     const text = await completionFn(
       ctx,
@@ -75,6 +84,7 @@ export const agentGenerateMessage = internalAction({
       args.conversationId as GameId<'conversations'>,
       args.playerId as GameId<'players'>,
       args.otherPlayerId as GameId<'players'>,
+      turn?.speak,
     );
 
     await ctx.runMutation(internal.aiTown.agent.agentSendMessage, {
@@ -84,7 +94,7 @@ export const agentGenerateMessage = internalAction({
       playerId: args.playerId,
       text,
       messageUuid: args.messageUuid,
-      leaveConversation: args.type === 'leave',
+      leaveConversation: type === 'leave',
       operationId: args.operationId,
     });
   },
@@ -103,6 +113,21 @@ export const agentDoSomething = internalAction({
     const { player, agent } = args;
     const map = new WorldMap(args.map);
     const now = Date.now();
+    // A resident with a brain runs its own program here instead of the fixed logic below.
+    const resolved = await ctx.runQuery(internal.agent.brain.resolveBrain, {
+      worldId: args.worldId,
+      agentId: agent.id,
+    });
+    if (resolved) {
+      const decision = await brainTick(ctx, args, resolved, map);
+      await sleep(Math.random() * 1000);
+      await ctx.runMutation(api.aiTown.main.sendInput, {
+        worldId: args.worldId,
+        name: 'finishDoSomething',
+        args: { operationId: args.operationId, agentId: agent.id, ...decision },
+      });
+      return;
+    }
     // Don't try to start a new conversation if we were just in one.
     const justLeftConversation =
       agent.lastConversation && now < agent.lastConversation + CONVERSATION_COOLDOWN;

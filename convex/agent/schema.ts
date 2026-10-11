@@ -2,6 +2,8 @@ import { v } from 'convex/values';
 import { playerId, conversationId } from '../aiTown/ids';
 import { defineTable } from 'convex/server';
 import { EMBEDDING_DIMENSION } from '../util/llm';
+import { brainTables } from './brainSchema';
+import { eventTables } from './eventSchema';
 
 export const memoryFields = {
   playerId,
@@ -46,6 +48,15 @@ export const memoryTables = {
 
 export const agentTables = {
   ...memoryTables,
+  agentBrains: defineTable(brainTables.agentBrains)
+    .index('agentId', ['worldId', 'agentId'])
+    .index('name', ['worldId', 'name']),
+  brainLog: defineTable(brainTables.brainLog).index('brainId', ['brainId', 'at']),
+  eventSubscriptions: defineTable(eventTables.eventSubscriptions).index('name', [
+    'worldId',
+    'name',
+  ]),
+  eventLog: defineTable(eventTables.eventLog).index('at', ['worldId', 'at']),
   embeddingsCache: defineTable({
     textHash: v.bytes(),
     embedding: v.array(v.float64()),

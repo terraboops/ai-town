@@ -2,7 +2,13 @@ import { v } from 'convex/values';
 import { ActionCtx, DatabaseReader, internalMutation, internalQuery } from '../_generated/server';
 import { Doc, Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
-import { LLMMessage, chatCompletion, fetchEmbedding } from '../util/llm';
+import {
+  CreateChatCompletionRequest,
+  LLMMessage,
+  chatCompletion,
+  fetchEmbedding,
+} from '../util/llm';
+import { brainComplete } from './brain';
 import { asyncMap } from '../util/asyncMap';
 import { GameId, agentId, conversationId, playerId } from '../aiTown/ids';
 import { SerializedPlayer } from '../aiTown/player';
@@ -28,6 +34,7 @@ export async function rememberConversation(
   playerId: GameId<'players'>,
   conversationId: GameId<'conversations'>,
 ) {
+  const think = await thinkerFor(ctx, worldId, agentId);
   const data = await ctx.runQuery(selfInternal.loadConversation, {
     worldId,
     playerId,
@@ -58,14 +65,14 @@ export async function rememberConversation(
     });
   }
   llmMessages.push({ role: 'user', content: 'Summary:' });
-  const { content } = await chatCompletion({
+  const content = await think('chat', 'remember', {
     messages: llmMessages,
     max_tokens: 500,
   });
   const description = `Conversation with ${otherPlayer.name} at ${new Date(
     data.conversation._creationTime,
   ).toLocaleString()}: ${content}`;
-  const importance = await calculateImportance(description);
+  const importance = await calculateImportance(description, think);
   const { embedding } = await fetchEmbedding(description);
   authors.delete(player.id as GameId<'players'>);
   await ctx.runMutation(selfInternal.insertMemory, {
@@ -81,8 +88,29 @@ export async function rememberConversation(
     },
     embedding,
   });
-  await reflectOnMemories(ctx, worldId, playerId);
+  await reflectOnMemories(ctx, worldId, playerId, think);
   return description;
+}
+
+// Which model does the remembering. A resident with a brain summarises and reflects with its
+// chat model and scores importance -- a one-digit answer -- with its cheap decider. Everyone
+// else uses the town's model, as upstream does.
+type Think = (
+  role: 'chat' | 'decider',
+  phase: string,
+  body: Omit<CreateChatCompletionRequest, 'model'> & { stream?: false },
+) => Promise<string>;
+
+async function thinkerFor(
+  ctx: ActionCtx,
+  worldId: Id<'worlds'>,
+  agentId: GameId<'agents'>,
+): Promise<Think> {
+  const resolved = await ctx.runQuery(internal.agent.brain.resolveBrain, { worldId, agentId });
+  if (!resolved) {
+    return async (_role, _phase, body) => (await chatCompletion(body)).content;
+  }
+  return (role, phase, body) => brainComplete(ctx, resolved.brain, role, phase, body);
 }
 
 export const loadConversation = internalQuery({
@@ -243,8 +271,8 @@ export const loadMessages = internalQuery({
   },
 });
 
-async function calculateImportance(description: string) {
-  const { content: importanceRaw } = await chatCompletion({
+async function calculateImportance(description: string, think: Think) {
+  const importanceRaw = await think('decider', 'importance', {
     messages: [
       {
         role: 'user',
@@ -326,6 +354,7 @@ async function reflectOnMemories(
   ctx: ActionCtx,
   worldId: Id<'worlds'>,
   playerId: GameId<'players'>,
+  think: Think,
 ) {
   const { memories, lastReflectionTs, name } = await ctx.runQuery(
     internal.agent.memory.getReflectionMemories,
@@ -359,7 +388,7 @@ async function reflectOnMemories(
     'Example: [{insight: "...", statementIds: [1,2]}, {insight: "...", statementIds: [1]}, ...]',
   );
 
-  const { content: reflection } = await chatCompletion({
+  const reflection = await think('chat', 'reflect', {
     messages: [
       {
         role: 'user',
@@ -372,7 +401,7 @@ async function reflectOnMemories(
     const insights = JSON.parse(reflection) as { insight: string; statementIds: number[] }[];
     const memoriesToSave = await asyncMap(insights, async (item) => {
       const relatedMemoryIds = item.statementIds.map((idx: number) => memories[idx]._id);
-      const importance = await calculateImportance(item.insight);
+      const importance = await calculateImportance(item.insight, think);
       const { embedding } = await fetchEmbedding(item.insight);
       console.debug('adding reflection memory...', item.insight);
       return {

@@ -109,10 +109,74 @@ export function getLLMConfig(): LLMConfig {
   };
 }
 
-const AuthHeaders = (): Record<string, string> =>
-  getLLMConfig().apiKey
+// A model bound to one agent rather than to the whole town. Hosted providers are presets
+// with a fixed URL and a fixed env var for the key, so a caller can choose WHICH provider an
+// agent uses but can never point a deployment's key at a URL of its own choosing. The key
+// itself is never stored with the agent: only the preset knows which env var holds it.
+export type ModelProvider = 'ollama' | 'openai' | 'anthropic' | 'together' | 'openrouter';
+export interface ModelRef {
+  provider: ModelProvider;
+  model: string;
+}
+
+const HOSTED_PRESETS: Record<Exclude<ModelProvider, 'ollama'>, { url: string; keyEnv: string }> =
+  {
+    openai: { url: 'https://api.openai.com', keyEnv: 'OPENAI_API_KEY' },
+    // Anthropic's OpenAI-compatible surface, so one request shape serves every provider.
+    anthropic: { url: 'https://api.anthropic.com', keyEnv: 'ANTHROPIC_API_KEY' },
+    together: { url: 'https://api.together.xyz', keyEnv: 'TOGETHER_API_KEY' },
+    openrouter: { url: 'https://openrouter.ai/api', keyEnv: 'OPENROUTER_API_KEY' },
+  };
+
+export function isPaidProvider(provider: ModelProvider) {
+  return provider !== 'ollama';
+}
+
+// The chat config for one agent's model. Embeddings are deliberately NOT per agent: every
+// memory lives in one vector index of a fixed dimension, so the town shares one embedding
+// model and this only ever swaps the chat side.
+export function configForModel(ref: ModelRef): LLMConfig {
+  const base = getLLMConfig();
+  if (ref.provider === 'ollama') {
+    return {
+      ...base,
+      provider: 'ollama',
+      url: process.env.OLLAMA_HOST ?? 'http://127.0.0.1:11434',
+      chatModel: ref.model,
+      stopWords: ['<|eot_id|>'],
+      apiKey: undefined,
+    };
+  }
+  const preset = HOSTED_PRESETS[ref.provider];
+  if (!preset) {
+    throw new Error(`Unknown model provider: ${ref.provider}`);
+  }
+  // A hosted model sends the town's conversations and memories off the machine and spends
+  // money, so it is opt-in for the whole deployment, not something a single agent's record
+  // can switch on. Without the opt-in the caller falls back to the local default.
+  if (process.env.BRAIN_ALLOW_HOSTED !== '1') {
+    throw new Error(
+      `${ref.provider} is a hosted provider; set BRAIN_ALLOW_HOSTED=1 in the deployment env to allow it`,
+    );
+  }
+  const apiKey = process.env[preset.keyEnv];
+  if (!apiKey) {
+    throw new Error(`${ref.provider} needs ${preset.keyEnv} in the deployment env`);
+  }
+  return {
+    ...base,
+    provider: ref.provider === 'openai' ? 'openai' : 'custom',
+    url: preset.url,
+    chatModel: ref.model,
+    stopWords: [],
+    apiKey,
+  };
+}
+
+const AuthHeaders = (config: LLMConfig = getLLMConfig()): Record<string, string> =>
+  config.apiKey
     ? {
-        Authorization: 'Bearer ' + getLLMConfig().apiKey,
+        Authorization: 'Bearer ' + config.apiKey,
       }
     : {};
 
@@ -123,6 +187,7 @@ export async function chatCompletion(
   } & {
     stream?: false | null | undefined;
   },
+  config?: LLMConfig,
 ): Promise<{ content: string; retries: number; ms: number }>;
 // Overload for streaming
 export async function chatCompletion(
@@ -131,13 +196,14 @@ export async function chatCompletion(
   } & {
     stream?: true;
   },
+  config?: LLMConfig,
 ): Promise<{ content: ChatCompletionContent; retries: number; ms: number }>;
 export async function chatCompletion(
   body: Omit<CreateChatCompletionRequest, 'model'> & {
     model?: CreateChatCompletionRequest['model'];
   },
+  config: LLMConfig = getLLMConfig(),
 ) {
-  const config = getLLMConfig();
   body.model = body.model ?? config.chatModel;
   const stopWords = body.stop ? (typeof body.stop === 'string' ? [body.stop] : body.stop) : [];
   if (config.stopWords) stopWords.push(...config.stopWords);
@@ -151,7 +217,7 @@ export async function chatCompletion(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...AuthHeaders(),
+        ...AuthHeaders(config),
       },
 
       body: JSON.stringify(body),
@@ -160,7 +226,7 @@ export async function chatCompletion(
       const error = await result.text();
       console.error({ error });
       if (result.status === 404 && config.provider === 'ollama') {
-        await tryPullOllama(body.model!, error);
+        await tryPullOllama(body.model!, error, config.url);
       }
       throw {
         retry: result.status === 429 || result.status >= 500,
@@ -187,10 +253,10 @@ export async function chatCompletion(
   };
 }
 
-export async function tryPullOllama(model: string, error: string) {
+export async function tryPullOllama(model: string, error: string, url = getLLMConfig().url) {
   if (error.includes('try pulling')) {
     console.error('Embedding model not found, pulling from Ollama');
-    const pullResp = await fetch(getLLMConfig().url + '/api/pull', {
+    const pullResp = await fetch(url + '/api/pull', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -15,6 +15,65 @@ This wraps it in MCP tools.
 | `move_to` | walk to a tile, or stop where you are |
 | `leave_town` | take your character out |
 | `read_conversations` | the town's conversations and messages, newest first |
+| `talk_to` | invite a character to talk; both of you walk to the midpoint |
+| `respond_invite` | accept or decline an invitation you were sent |
+| `say` | say a line in your conversation (waits for both to arrive and for the other to finish typing) |
+| `leave_conversation` | walk away |
+| `my_conversation` | who you're talking with, where each stands, and what has been said |
+| `next_event` | wait for an invitation or a message aimed at you; returns each once |
+| `register_resident` | add a townsperson that lives on its own, with models you choose |
+| `update_resident` | rebind its models, replace its program, rewrite its identity or plan; no rebuild |
+| `resident_status` | its models, program, counters, and recent model calls with which model answered |
+| `retire_resident` | take a resident you own out of the town |
+
+## Events, not polling
+
+`join_town` subscribes your character. From then on the town records an event only when a
+conversation is started with you or a message is written to you; agents talking among
+themselves, and characters nobody subscribed, record nothing. `next_event` waits on a live Convex
+subscription, so the deployment pushes the event the moment it lands and the call returns. The
+backend makes no outbound calls.
+
+## Residents
+
+A resident is a full townsperson: the engine's own loop walks it, has it invite and accept,
+talk, remember conversations and reflect. What `register_resident` adds is a *brain*:
+
+- `chat` — the model that writes its lines and its memories.
+- `decider` — an optional small model asked yes/no questions. Only a yes reaches `chat`.
+- `program` — a router, stored as data, read on every decision:
+
+```json
+{
+  "alone": "wander",
+  "style": "Speak like a 1930s radio announcer addressing everyone, one sentence only.",
+  "tick": {
+    "maxDistance": 14,
+    "gate": { "model": "decider", "prompt": "You are {name}. {candidate} is {candidateDistance} tiles away. Say hello? YES or NO.", "yes": "YES" },
+    "onYes": "invite", "onNo": "wander"
+  },
+  "converse": {
+    "maxMessages": 8,
+    "gate": { "model": "decider", "prompt": "{transcript}\nKeep talking? CONTINUE or LEAVE.", "yes": "CONTINUE" },
+    "onYes": "reply", "onNo": "leave", "speaker": "chat"
+  }
+}
+```
+
+When nobody is within `maxDistance`, a tick calls no model at all; it counts as an idle tick.
+Gate prompts can use `{name} {identity} {plan} {candidate} {candidateDistance}
+{minutesSinceConversation}` (tick) and `{partner} {numMessages} {lastMessage} {transcript}`
+(converse). Omit `program` to get the default above.
+
+Providers: `ollama` runs on the town's own Ollama. `openai`, `anthropic`, `together` and
+`openrouter` are fixed presets that work only when the deployment sets `BRAIN_ALLOW_HOSTED=1`
+and that provider's key; otherwise the call falls back to the town's default model and the log
+says so. Embeddings stay on the town's model: the memory index has a fixed dimension.
+
+Residents and event subscriptions are writes the deployment accepts only with
+`TOWN_REGISTRY_KEY`. This server reads it from `REGISTRY_KEY_FILE`
+(default `~/.config/ai-town/registry-key`, mode 0600); callers never see it. Each brain is owned
+by the verified login that registered it, and only that login may change or retire it.
 
 ## Identity
 
@@ -40,6 +99,7 @@ The shim is the network gate; this is the identity check. Both, deliberately.
 | `EXPECTED_AUDIENCE` | `ai-town-mcp` | must match the shim's `-audience` |
 | `ALLOW_ANONYMOUS` | unset | `1` admits a caller with no assertion, for local testing only |
 | `WORLD_ID` | unset | pin a world; otherwise the deployment's default |
+| `REGISTRY_KEY_FILE` | `~/.config/ai-town/registry-key` | the deployment's `TOWN_REGISTRY_KEY`; without it residents and events are off |
 
 `ALLOW_ANONYMOUS=1` is the one setting that defeats the identity check. Do not use it anywhere a
 real caller can reach.
@@ -71,6 +131,29 @@ Then publish the gate over the tailnet and point an MCP client at
 `convex/world.ts` — `joinWorld` takes an optional `name` and `description`. Upstream hardcodes a
 single default name, so every caller shared one character and `tokenIdentifier` collided. The
 arguments are optional, so the stock browser client is unaffected.
+
+`convex/agent/brain*.ts` — residents' brains: registration, model binding, the program router,
+and a log of every model call with the provider and model that answered.
+`agentOperations.ts` runs a resident's program at the two decision points upstream hard-codes
+(what to do when idle; whether to keep talking), and `memory.ts` uses the resident's models for
+summaries, importance and reflection.
+
+`convex/util/llm.ts` — `chatCompletion` takes a per-call config, so each resident can use its own
+model and provider.
+
+`convex/agent/events.ts` — events for subscribed human characters, raised from
+`Conversation.start` and from both message paths.
+
+`convex/aiTown/agentInputs.ts` — `createAgentFromSpec`, `updateAgentDescription` and `retireAgent`
+inputs, so residents can be added and removed while the town runs.
+
+Two upstream fixes found on the way:
+
+- `game.ts` — a human player's `lastInput` was set on join and never again, so every person was
+  dropped as idle five minutes after joining however active they were. Any input naming a human
+  player now counts as activity.
+- `conversation.ts` — the invite timeout counted from the invitation, so an agent busy with a
+  slow model call accepted late and gave up at once. The walk-over clock now starts on acceptance.
 
 ## Notes
 

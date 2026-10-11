@@ -159,6 +159,13 @@ export class Game extends AbstractGame {
     if (!handler) {
       throw new Error(`Invalid input: ${name}`);
     }
+    // Anything a human player does counts as activity. Upstream only set lastInput on
+    // join, so every human was dropped as idle exactly HUMAN_IDLE_TOO_LONG after joining.
+    const actor = (args as { playerId?: string }).playerId;
+    const player = actor ? this.world.players.get(actor as GameId<'players'>) : undefined;
+    if (player?.human) {
+      player.lastInput = now;
+    }
     return handler(this, now, args as any);
   }
 

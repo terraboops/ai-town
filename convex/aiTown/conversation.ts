@@ -149,6 +149,16 @@ export class Conversation {
         ],
       }),
     );
+    // A human invitee may be driven from outside the town; let its driver know rather than
+    // making it poll. events.ts decides whether anyone is listening.
+    if (invitee.human) {
+      game.scheduleOperation('notifyInvite', {
+        worldId: game.worldId,
+        conversationId,
+        inviter: player.id,
+        invitee: invitee.id,
+      });
+    }
     return { conversationId };
   }
 
@@ -162,7 +172,7 @@ export class Conversation {
     this.isTyping = { playerId: player.id, messageUuid, since: now };
   }
 
-  acceptInvite(game: Game, player: Player) {
+  acceptInvite(game: Game, now: number, player: Player) {
     const member = this.participants.get(player.id);
     if (!member) {
       throw new Error(`Player ${player.id} not in conversation ${this.id}`);
@@ -173,6 +183,9 @@ export class Conversation {
       );
     }
     member.status = { kind: 'walkingOver' };
+    // The walk-over clock starts now, not at the invitation: an agent that accepts late
+    // (busy with a slow model call when the invite arrived) would otherwise give up at once.
+    for (const m of this.participants.values()) m.invited = now;
   }
 
   rejectInvite(game: Game, now: number, player: Player) {
@@ -344,7 +357,7 @@ export const conversationInputs = {
       if (!conversation) {
         throw new Error(`Invalid conversation ID ${conversationId}`);
       }
-      conversation.acceptInvite(game, player);
+      conversation.acceptInvite(game, now, player);
       return null;
     },
   }),

@@ -40,6 +40,9 @@ export const agentInputs = {
       destination: v.optional(point),
       invitee: v.optional(v.id('players')),
       activity: v.optional(activity),
+      // The brain considered someone and decided against it: back off as if it had asked,
+      // so the question is not put to the model again on the very next tick.
+      declinedInvite: v.optional(v.boolean()),
     },
     handler: (game, now, args) => {
       const agentId = parseGameId('agents', args.agentId);
@@ -70,6 +73,9 @@ export const agentInputs = {
       }
       if (args.activity) {
         player.activity = args.activity;
+      }
+      if (args.declinedInvite) {
+        agent.lastInviteAttempt = now;
       }
       return null;
     },
@@ -150,6 +156,83 @@ export const agentInputs = {
         }),
       );
       return { agentId };
+    },
+  }),
+  // A new resident, described by the caller rather than picked from data/characters.ts. It
+  // gets exactly the loop the seeded townsfolk get -- wander, invite, talk, remember,
+  // reflect -- with its own brain deciding how. See agent/brain.ts.
+  createAgentFromSpec: inputHandler({
+    args: {
+      name: v.string(),
+      character: v.string(),
+      identity: v.string(),
+      plan: v.string(),
+      brainId: v.optional(v.id('agentBrains')),
+    },
+    handler: (game, now, args) => {
+      for (const p of game.playerDescriptions.values()) {
+        if (p.name === args.name && game.world.players.has(p.playerId)) {
+          throw new Error(`${args.name} already lives here`);
+        }
+      }
+      const playerId = Player.join(game, now, args.name, args.character, args.identity);
+      const agentId = game.allocId('agents');
+      game.world.agents.set(
+        agentId,
+        new Agent({
+          id: agentId,
+          playerId,
+          inProgressOperation: undefined,
+          lastConversation: undefined,
+          lastInviteAttempt: undefined,
+          toRemember: undefined,
+        }),
+      );
+      game.agentDescriptions.set(
+        agentId,
+        new AgentDescription({
+          agentId,
+          identity: args.identity,
+          plan: args.plan,
+          brainId: args.brainId,
+        }),
+      );
+      game.descriptionsModified = true;
+      return { agentId, playerId };
+    },
+  }),
+  updateAgentDescription: inputHandler({
+    args: {
+      agentId,
+      identity: v.optional(v.string()),
+      plan: v.optional(v.string()),
+    },
+    handler: (game, now, args) => {
+      const id = parseGameId('agents', args.agentId);
+      const description = game.agentDescriptions.get(id);
+      if (!description) {
+        throw new Error(`Couldn't find agent: ${id}`);
+      }
+      if (args.identity) description.identity = args.identity;
+      if (args.plan) description.plan = args.plan;
+      game.descriptionsModified = true;
+      return null;
+    },
+  }),
+  // Move a resident out. The agent goes with its player: an agent whose player has left
+  // would fail every tick.
+  retireAgent: inputHandler({
+    args: { agentId },
+    handler: (game, now, args) => {
+      const id = parseGameId('agents', args.agentId);
+      const agent = game.world.agents.get(id);
+      if (!agent) {
+        throw new Error(`Couldn't find agent: ${id}`);
+      }
+      const player = game.world.players.get(agent.playerId);
+      game.world.agents.delete(id);
+      player?.leave(game, now);
+      return null;
     },
   }),
 };
